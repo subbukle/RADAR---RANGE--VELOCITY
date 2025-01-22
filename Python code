@@ -1,0 +1,138 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.fft import fft, ifft
+
+
+class RadarSimulator:
+    def __init__(self, fs, f_start, f_end, max_range, speed_of_light=3e8, num_samples=1024):
+        """
+        Initializes the RadarSimulator class.
+        
+        :param fs: Sampling frequency
+        :param f_start: Start frequency of the chirp
+        :param f_end: End frequency of the chirp
+        :param max_range: Maximum detectable range in meters
+        :param speed_of_light: Speed of light (default: 3e8 m/s)
+        :param num_samples: Number of samples per chirp (default: 1024)
+        """
+        self.fs = fs  # Sampling frequency (Hz)
+        self.f_start = f_start  # Start frequency (Hz)
+        self.f_end = f_end  # End frequency (Hz)
+        self.max_range = max_range  # Maximum detectable range (meters)
+        self.speed_of_light = speed_of_light  # Speed of light (m/s)
+        self.num_samples = num_samples  # Number of samples per chirp
+
+        # Derived parameters
+        self.bandwidth = f_end - f_start  # Chirp bandwidth
+        self.chirp_duration = self.num_samples / self.fs  # Chirp duration
+        self.time = np.linspace(0, self.chirp_duration, self.num_samples)  # Time vector
+
+    def generate_chirp_signal(self):
+        """
+        Generates a chirp signal for FMCW radar.
+        
+        :return: Chirp signal (real) as a numpy array
+        """
+        # Linear frequency modulation
+        chirp_signal = np.exp(1j * 2 * np.pi * (self.f_start * self.time + 
+                                                (self.bandwidth / 2) * (self.time ** 2) / self.chirp_duration))
+        return chirp_signal
+
+    def simulate_target_response(self, target_distance, target_velocity):
+        """
+        Simulates the response from a target based on its distance and velocity.
+        
+        :param target_distance: Distance of the target (meters)
+        :param target_velocity: Velocity of the target (m/s)
+        :return: Simulated received signal with delay and Doppler shift
+        """
+        # Calculate the time delay for the target (round trip)
+        delay = 2 * target_distance / self.speed_of_light
+        
+        # Doppler shift for the target
+        doppler_shift = 2 * target_velocity * self.f_start / self.speed_of_light
+        
+        # Generate the received signal with delay and Doppler shift
+        received_signal = np.roll(self.generate_chirp_signal(), int(self.fs * delay)) * \
+                          np.exp(1j * 2 * np.pi * doppler_shift * self.time)
+        
+        return received_signal
+
+    def process_signal(self, transmitted_signal, received_signal):
+        """
+        Process the transmitted and received signals to extract range and velocity.
+        
+        :param transmitted_signal: Transmitted chirp signal
+        :param received_signal: Received signal from the target
+        :return: Range and velocity of the detected target
+        """
+        # Perform FFT on the transmitted and received signals
+        transmitted_fft = fft(transmitted_signal)
+        received_fft = fft(received_signal)
+        
+        # Cross-correlation in the frequency domain (multiplying and then IFFT)
+        correlation = ifft(transmitted_fft * np.conj(received_fft))
+        
+        # Find the peak of the correlation
+        peak_index = np.argmax(np.abs(correlation))
+        
+        # Range estimation (distance to the target)
+        range_estimation = (peak_index * self.speed_of_light) / (2 * self.bandwidth)
+
+        # Doppler shift estimation (velocity of the target)
+        doppler_frequency = np.angle(received_fft[peak_index] * np.conj(transmitted_fft[peak_index])) / (2 * np.pi)
+        velocity_estimation = (doppler_frequency * self.speed_of_light) / (2 * self.f_start)
+
+        return range_estimation, velocity_estimation
+
+
+class RadarVisualizer:
+    def __init__(self, radar_simulator):
+        self.radar_simulator = radar_simulator
+
+    def plot_chirp_signal(self, chirp_signal):
+        """Plot the generated chirp signal."""
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.radar_simulator.time, np.real(chirp_signal), label="Real part of Chirp Signal")
+        plt.plot(self.radar_simulator.time, np.imag(chirp_signal), label="Imaginary part of Chirp Signal", linestyle='--')
+        plt.xlabel("Time [s]")
+        plt.ylabel("Amplitude")
+        plt.title("Chirp Signal")
+        plt.legend()
+        plt.show()
+
+    def plot_range_velocity(self, range_estimation, velocity_estimation):
+        """Plot the estimated range and velocity."""
+        plt.figure(figsize=(10, 6))
+        plt.bar(['Range (m)', 'Velocity (m/s)'], [range_estimation, velocity_estimation])
+        plt.title("Range and Velocity Estimation")
+        plt.ylabel("Estimated Value")
+        plt.show()
+
+
+# Main function to simulate radar operation
+if __name__ == "__main__":
+    # Radar parameters
+    fs = 20e6  # 20 MHz Sampling frequency
+    f_start = 77e9  # Start frequency: 77 GHz
+    f_end = 81e9    # End frequency: 81 GHz
+    max_range = 200  # Maximum range of 200 meters
+    
+    # Create RadarSimulator instance
+    radar = RadarSimulator(fs, f_start, f_end, max_range)
+    
+    # Generate Chirp Signal
+    chirp_signal = radar.generate_chirp_signal()
+
+    # Simulate target response (e.g., target at 50 meters with 20 m/s velocity)
+    target_distance = 50
+    target_velocity = 20  # Target velocity in m/s
+    received_signal = radar.simulate_target_response(target_distance, target_velocity)
+
+    # Process the signal to extract range and velocity
+    range_est, velocity_est = radar.process_signal(chirp_signal, received_signal)
+
+    # Visualize the chirp signal and the estimated range and velocity
+    visualizer = RadarVisualizer(radar)
+    visualizer.plot_chirp_signal(chirp_signal)
+    visualizer.plot_range_velocity(range_est, velocity_est)
